@@ -1,0 +1,18 @@
+{
+  "name": "message-in-a-bottle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d",
+    "dev": "npm run dev --workspace api",
+    "test": "npm run test --workspace api",
+    "typecheck": "npm run typecheck --workspace api"
+  }
+}
