@@ -54,6 +54,8 @@ export class ApiError extends Error {
     constructor(
         message: string,
         readonly status: number,
+        /** Per-field validation messages, when the server sent them. */
+        readonly fields?: Record<string, string>,
     ) {
         super(message);
     }
@@ -71,11 +73,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const data = text ? (JSON.parse(text) as unknown) : null;
 
     if (!res.ok) {
-        const message =
-            data && typeof data === "object" && "error" in data
-                ? String((data as { error: unknown }).error)
-                : "Something went wrong.";
-        throw new ApiError(message, res.status);
+        const payload = (data ?? {}) as { error?: unknown; fields?: Record<string, string> };
+        const message = payload.error ? String(payload.error) : "Something went wrong.";
+        throw new ApiError(message, res.status, payload.fields);
     }
 
     return data as T;

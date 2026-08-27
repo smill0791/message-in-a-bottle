@@ -18,6 +18,16 @@ fail=0
 
 sql() { docker exec -i bottle-db psql -U bottle -d bottle -qtA -c "$1" | tr -d ' \n'; }
 
+# Start from an empty database.
+#
+# Several assertions ("the beach is empty before approval", "a bottle does not
+# wash up twice") are statements about the whole pool, so leftover approved
+# messages from a previous run make them fail. Re-running a green suite and
+# watching it go red is the fastest way to stop trusting it.
+#
+# Restore the placeholder bottles afterwards with scripts/seed.sh.
+sql "truncate discoveries, ratings, reports, message_stats, messages, sessions, users cascade" >/dev/null
+
 # api METHOD PATH [JAR] [JSON]
 # Deliberately no `curl -f`: we want to see error bodies, not an empty string.
 api() {
@@ -64,6 +74,15 @@ check "unknown handle rejected" "wrong handle or password" \
     "$(api POST /auth/login "" "$(printf '{"handle":"ghost_%s","password":"%s"}' "$suffix" "$pw")")"
 check "session resolves" "\"handle\":\"$b\"" "$(api GET /auth/me "$jar_b")"
 check "anonymous is refused" "not signed in" "$(api GET /auth/me)"
+
+echo "=== registration validation (regression: errors must name their field) ==="
+both=$(api POST /auth/register "" '{"handle":"Ab","password":"short"}')
+check "both field errors reported" "Password must be at least" "$both"
+check "name error names the field" "Name must be" "$both"
+check "short password names itself" "Password must be at least" \
+    "$(api POST /auth/register "" "$(printf '{"handle":"short_pw_%s","password":"abcde1234"}' "$suffix")")"
+check "dashes allowed in handle" "\"handle\":\"drift-wood-$suffix\"" \
+    "$(api POST /auth/register "" "$(printf '{"handle":"drift-wood-%s","password":"abcde12345"}' "$suffix")")"
 
 echo "=== writing ==="
 letter="Some days the tide goes out further than you expect. It always comes back."

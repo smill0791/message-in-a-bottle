@@ -418,6 +418,22 @@ textarea {
     line-height: 1.75;
 }
 
+/* Requirements sit under the input from the start, so nobody has to discover
+ * the rules by failing. Reserves its line height either way to stop the form
+ * jumping when a message appears. */
+.hint {
+    display: block;
+    min-height: 1.15em;
+    margin-top: 5px;
+    font-size: 0.76rem;
+    line-height: 1.15em;
+    color: var(--ink-soft);
+}
+
+.hint.bad {
+    color: #a4453a;
+}
+
 .count {
     text-align: right;
     font-size: 0.78rem;

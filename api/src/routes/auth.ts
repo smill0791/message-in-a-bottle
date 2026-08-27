@@ -10,18 +10,48 @@ import {
     verifyPassword,
 } from "../auth.js";
 
+export const HANDLE_PATTERN = /^[a-z0-9_-]{3,24}$/;
+export const PASSWORD_MIN = 10;
+
 const credentials = z.object({
     handle: z
         .string()
-        .regex(/^[a-z0-9_]{3,24}$/, "3-24 characters, lowercase letters, numbers and underscore"),
-    password: z.string().min(10, "at least 10 characters").max(200),
+        .regex(
+            HANDLE_PATTERN,
+            "Name must be 3-24 characters: lowercase letters, numbers, dashes or underscores.",
+        ),
+    password: z
+        .string()
+        .min(PASSWORD_MIN, `Password must be at least ${PASSWORD_MIN} characters.`)
+        .max(200, "Password must be under 200 characters."),
 });
+
+/**
+ * Report *every* problem, keyed by field.
+ *
+ * Returning only `issues[0]` meant that a form with a bad name and a short
+ * password showed the name error alone, so fixing it revealed a second error
+ * the user had no way to anticipate. Worse, neither message named its field,
+ * which on a two-field form is a guessing game.
+ */
+function fieldErrors(error: z.ZodError): Record<string, string> {
+    const fields: Record<string, string> = {};
+    for (const issue of error.issues) {
+        const key = String(issue.path[0] ?? "form");
+        fields[key] ??= issue.message;
+    }
+    return fields;
+}
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
     app.post("/auth/register", async (req, reply) => {
         const parsed = credentials.safeParse(req.body);
         if (!parsed.success) {
-            return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid" });
+            const fields = fieldErrors(parsed.error);
+            return reply.code(400).send({
+                error: Object.values(fields).join(" "),
+                fields,
+            });
         }
         const { handle, password } = parsed.data;
 
