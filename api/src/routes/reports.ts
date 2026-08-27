@@ -49,12 +49,28 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
             // Already reported by this user. Report once, count once.
             if (rowCount === 0) return { pulled: false, duplicate: true };
 
-            const { rows: counted } = await tx.query<{ open_reports: string }>(
+            // Lifetime counter. Useful signal about a message's history, but
+            // deliberately not what the threshold reads.
+            await tx.query(
                 `update message_stats
                     set report_count = report_count + 1,
                         updated_at = now()
+                  where message_id = $1`,
+                [messageId],
+            );
+
+            // The threshold counts *unresolved* reports only.
+            //
+            // Reading the lifetime counter meant a moderator's decision never
+            // stuck: approve a message that had been reported three times, and
+            // the very next report re-pulled it instantly, because the counter
+            // still said four. Approving clears the reports, so a re-pull needs
+            // genuinely new complaints.
+            const { rows: counted } = await tx.query<{ open_reports: string }>(
+                `select count(*) as open_reports
+                   from reports
                   where message_id = $1
-              returning report_count as open_reports`,
+                    and resolved = false`,
                 [messageId],
             );
 

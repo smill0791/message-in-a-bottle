@@ -64,6 +64,7 @@ export async function destroySession(token: string): Promise<void> {
 export interface AuthedUser {
     id: string;
     handle: string;
+    isModerator: boolean;
 }
 
 declare module "fastify" {
@@ -78,7 +79,7 @@ export async function loadUser(req: FastifyRequest): Promise<void> {
     if (!token) return;
 
     const { rows } = await pool.query<AuthedUser>(
-        `select u.id, u.handle
+        `select u.id, u.handle, u.is_moderator as "isModerator"
            from sessions s
            join users u on u.id = s.user_id
           where s.token = $1

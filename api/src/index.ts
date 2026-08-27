@@ -9,6 +9,7 @@ import { messageRoutes } from "./routes/messages.js";
 import { beachRoutes } from "./routes/beach.js";
 import { chestRoutes } from "./routes/chest.js";
 import { reportRoutes } from "./routes/reports.js";
+import { adminRoutes } from "./routes/admin.js";
 
 export async function build() {
     const app = Fastify({
@@ -39,6 +40,7 @@ export async function build() {
     await app.register(beachRoutes);
     await app.register(chestRoutes);
     await app.register(reportRoutes);
+    await app.register(adminRoutes);
 
     return app;
 }

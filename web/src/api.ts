@@ -1,6 +1,18 @@
 export interface User {
     id: string;
     handle: string;
+    isModerator: boolean;
+}
+
+export interface QueueItem {
+    id: string;
+    body: string;
+    created_at: string;
+    author: string;
+    open_reports: number;
+    reasons: string[];
+    discovery_count: number;
+    previously_reviewed: boolean;
 }
 
 export interface Bottle {
@@ -129,6 +141,16 @@ export const api = {
             method: "PUT",
             body: JSON.stringify({ theme, resonated }),
         }),
+
+    queue: () => request<{ queue: QueueItem[] }>("/admin/queue"),
+
+    summary: () => request<{ pending: number; reported: number }>("/admin/summary"),
+
+    approve: (id: string) =>
+        request<{ status: string }>(`/admin/messages/${id}/approve`, { method: "POST" }),
+
+    reject: (id: string) =>
+        request<{ status: string }>(`/admin/messages/${id}/reject`, { method: "POST" }),
 
     report: (id: string, reason: string) =>
         request<{ ok: boolean }>(`/messages/${id}/report`, {

@@ -144,6 +144,80 @@ check "report accepted" "take a look" \
 api POST "/messages/$mid/report" "$jar_b" '{"reason":"off_vibe"}' >/dev/null
 check "duplicate report counted once" "1" "$(sql "select report_count from message_stats where message_id='$mid'")"
 
+echo "=== moderation ==="
+
+# Register a throwaway account and leave its cookie jar in $REPLY_JAR.
+signup() {
+    local name="$1"
+    REPLY_JAR=$(mktemp)
+    api POST /auth/register "$REPLY_JAR" "$(printf '{"handle":"%s","password":"abcde12345"}' "$name")" >/dev/null
+}
+
+signup "mod_$suffix";   mod_jar=$REPLY_JAR
+signup "plain_$suffix"; plain_jar=$REPLY_JAR
+
+check "admin queue hidden from ordinary users" "not found" "$(api GET /admin/queue "$plain_jar")"
+check "admin queue hidden from anonymous"      "not found" "$(api GET /admin/queue)"
+
+sql "update users set is_moderator = true where handle = 'mod_$suffix'" >/dev/null
+check "moderator can read the queue" '"queue"' "$(api GET /admin/queue "$mod_jar")"
+check "me reports moderator status" '"isModerator":true' "$(api GET /auth/me "$mod_jar")"
+
+# A fresh submission sits pending until a moderator acts.
+api POST /messages "$jar_a" '{"body":"A message that needs reviewing before it sails."}' >/dev/null
+new_id=$(sql "select id from messages where body like 'A message that needs reviewing%' limit 1")
+check "new submission appears in the queue" "$new_id" "$(api GET /admin/queue "$mod_jar")"
+check "unreviewed item shows no reports" '"open_reports":0' "$(api GET /admin/queue "$mod_jar")"
+check "approving works" '"status":"approved"' "$(api POST "/admin/messages/$new_id/approve" "$mod_jar")"
+check "approved message left the queue" "0" \
+    "$(sql "select count(*) from messages where id='$new_id' and status='pending'")"
+check "double approval is refused" "already decided" \
+    "$(api POST "/admin/messages/$new_id/approve" "$mod_jar")"
+check "approval is attributed" "1" \
+    "$(sql "select count(*) from messages where id='$new_id' and moderated_by is not null")"
+
+echo "=== regression: a moderator decision must survive further reports ==="
+# Three reporters push the message past the auto-pull threshold.
+for n in 1 2 3; do
+    signup "rep${n}_$suffix"
+    eval "rep${n}_jar=\$REPLY_JAR"
+    uid=$(sql "select id from users where handle='rep${n}_$suffix'")
+    sql "insert into discoveries (user_id, message_id) values ('$uid','$new_id') on conflict do nothing" >/dev/null
+done
+api POST "/messages/$new_id/report" "$rep1_jar" '{"reason":"off_vibe"}' >/dev/null
+api POST "/messages/$new_id/report" "$rep2_jar" '{"reason":"off_vibe"}' >/dev/null
+api POST "/messages/$new_id/report" "$rep3_jar" '{"reason":"spam"}'     >/dev/null
+check "three reports pull it from the beach" "pending" \
+    "$(sql "select status from messages where id='$new_id'")"
+check "queue flags it as reported" '"open_reports":3' "$(api GET /admin/queue "$mod_jar")"
+check "queue lists the reasons" "off_vibe" "$(api GET /admin/queue "$mod_jar")"
+check "queue marks it previously reviewed" '"previously_reviewed":true' \
+    "$(api GET /admin/queue "$mod_jar")"
+
+# The moderator decides the reports were unfounded and re-approves.
+api POST "/admin/messages/$new_id/approve" "$mod_jar" >/dev/null
+check "re-approval resolves the reports" "0" \
+    "$(sql "select count(*) from reports where message_id='$new_id' and resolved=false")"
+
+# One more complaint must NOT instantly undo that decision.
+signup "rep4_$suffix"; rep4_jar=$REPLY_JAR
+uid=$(sql "select id from users where handle='rep4_$suffix'")
+sql "insert into discoveries (user_id, message_id) values ('$uid','$new_id') on conflict do nothing" >/dev/null
+api POST "/messages/$new_id/report" "$rep4_jar" '{"reason":"spam"}' >/dev/null
+check "a single new report does not re-pull it" "approved" \
+    "$(sql "select status from messages where id='$new_id'")"
+check "lifetime report count still accumulates" "4" \
+    "$(sql "select report_count from message_stats where message_id='$new_id'")"
+
+echo "=== rejection ==="
+api POST /messages "$jar_a" '{"body":"Something that should not sail at all."}' >/dev/null
+bad_id=$(sql "select id from messages where body like 'Something that should not sail%' limit 1")
+check "rejecting works" '"status":"rejected"' "$(api POST "/admin/messages/$bad_id/reject" "$mod_jar")"
+check "rejected message is not discoverable" "0" \
+    "$(sql "select count(*) from messages where id='$bad_id' and status='approved'")"
+check "ordinary user cannot approve" "not found" \
+    "$(api POST "/admin/messages/$bad_id/approve" "$plain_jar")"
+
 echo
 printf 'passed: %d   failed: %d\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
