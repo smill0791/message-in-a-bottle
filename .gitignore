@@ -26,3 +26,6 @@ credentials
 # logs
 *.log
 npm-debug.log*
+
+# vite
+web/dist/
