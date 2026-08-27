@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: bottle-db
+    environment:
+      POSTGRES_USER: bottle
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: bottle
+    ports:
+      - "5432:5432"
+    volumes:
+      - bottle-pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bottle -d bottle"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  bottle-pgdata:
