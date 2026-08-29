@@ -73,8 +73,11 @@ export class ApiError extends Error {
     }
 }
 
+// Every server route lives under this prefix. Same origin, so no CORS.
+const BASE = "/api";
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(path, {
+    const res = await fetch(BASE + path, {
         ...init,
         // Session cookie is httpOnly; it rides along on same-origin requests.
         credentials: "same-origin",

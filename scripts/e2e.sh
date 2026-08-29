@@ -11,7 +11,8 @@
 
 set -uo pipefail
 
-API="${API:-http://127.0.0.1:3000}"
+# Base includes the /api prefix, so every path below stays unchanged.
+API="${API:-http://127.0.0.1:3000/api}"
 
 pass=0
 fail=0

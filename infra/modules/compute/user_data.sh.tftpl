@@ -161,7 +161,7 @@ EOF
 
 echo "=== waiting for the app to answer its health check ==="
 for i in $(seq 1 30); do
-    if curl -fs "http://127.0.0.1:${app_port}/healthz" >/dev/null; then
+    if curl -fs "http://127.0.0.1:${app_port}/api/healthz" >/dev/null; then
         echo "healthy after $${i} attempts"
         echo "=== bootstrap finished at $(date -Is) ==="
         exit 0

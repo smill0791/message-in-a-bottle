@@ -185,7 +185,7 @@ resource "aws_lb_target_group" "app" {
 
   health_check {
     enabled = true
-    path    = "/healthz"
+    path    = "/api/healthz"
 
     # /healthz is shallow on purpose and does not touch the database. A deep
     # check here would fail every target at once during a brief RDS blip, leave

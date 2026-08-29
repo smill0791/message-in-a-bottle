@@ -35,13 +35,28 @@ export async function build() {
     // `requireUser` as a preHandler.
     app.addHook("preHandler", loadUser);
 
-    await app.register(healthRoutes);
-    await app.register(authRoutes);
-    await app.register(messageRoutes);
-    await app.register(beachRoutes);
-    await app.register(chestRoutes);
-    await app.register(reportRoutes);
-    await app.register(adminRoutes);
+    /**
+     * Everything server-side lives under /api.
+     *
+     * Previously the API sat at the root alongside the static files, sharing a
+     * namespace with them. Nothing collided, but the frontend could not add a
+     * route named /chest or /messages without silently shadowing an endpoint -
+     * and that collision would show up as a confusing 401 rather than an
+     * obvious conflict. One prefix removes the whole class of problem and makes
+     * the not-found handler below unambiguous.
+     */
+    await app.register(
+        async (api) => {
+            await api.register(healthRoutes);
+            await api.register(authRoutes);
+            await api.register(messageRoutes);
+            await api.register(beachRoutes);
+            await api.register(chestRoutes);
+            await api.register(reportRoutes);
+            await api.register(adminRoutes);
+        },
+        { prefix: "/api" },
+    );
 
     /**
      * Serve the built frontend from the same origin as the API.
@@ -54,8 +69,12 @@ export async function build() {
         await app.register(fastifyStatic, { root: config.STATIC_DIR });
 
         // Single-page app: anything that is not an API route or a real file
-        // returns index.html and lets the client router decide. Without this a
-        // refresh on any path other than / returns 404.
+        // returns index.html and lets the client decide. Without this a refresh
+        // on any path other than / returns 404.
+        //
+        // An unmatched /api/* path must still 404 as JSON - returning HTML to
+        // a fetch() call produces a JSON parse error that tells you nothing
+        // about the actual mistake.
         app.setNotFoundHandler((req, reply) => {
             if (req.method !== "GET" || req.url.startsWith("/api")) {
                 return reply.code(404).send({ error: "not found" });
