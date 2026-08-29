@@ -11,7 +11,14 @@ build/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-.terraform.lock.hcl
+
+# Saved plan files are binary, stale the moment they are written, and can
+# contain resource attributes you would not want in git history.
+tfplan
+*.tfplan
+
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored. It pins provider
+# versions and hashes so every machine and CI runner resolves identically.
 
 # aws
 .aws-sam/
