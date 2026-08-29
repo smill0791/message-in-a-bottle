@@ -1,0 +1,174 @@
+#!/bin/bash
+#
+# Instance bootstrap. Runs once, as root, on first boot.
+#
+# Terraform interpolates $${...} at plan time; shell variables are written as
+# $${VAR} so they survive templating.
+#
+# Everything is logged to /var/log/user-data.log and to the console, because
+# these instances have no inbound path - if this script fails there is no way
+# to SSH in and look. The console log and CloudWatch are all you get.
+
+set -euo pipefail
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+echo "=== bootstrap starting at $(date -Is) ==="
+
+APP_DIR=/opt/bottle
+ENV_FILE=/etc/bottle.env
+
+# --------------------------------------------------------------- packages ---
+
+dnf -y update --security || true
+dnf -y install tar gzip python3 awscli-2 amazon-cloudwatch-agent
+
+# Node from NodeSource rather than the distro package, so the runtime version
+# is pinned and does not drift when Amazon Linux updates its default.
+curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+dnf -y install nodejs
+
+node --version
+npm --version
+
+# ---------------------------------------------------------------- artifact --
+
+mkdir -p "$${APP_DIR}"
+cd "$${APP_DIR}"
+
+echo "=== fetching s3://${artifact_bucket}/${artifact_key} ==="
+aws s3 cp "s3://${artifact_bucket}/${artifact_key}" /tmp/app.tar.gz --region "${region}"
+tar -xzf /tmp/app.tar.gz -C "$${APP_DIR}"
+rm -f /tmp/app.tar.gz
+
+# Install production dependencies on the instance rather than shipping
+# node_modules. A tree built on a developer's macOS laptop can contain
+# platform-specific binaries that will not run here, and the failure is
+# confusing when it happens.
+npm ci --omit=dev --no-audit --no-fund
+
+# --------------------------------------------------------------- database ---
+
+echo "=== reading database credentials ==="
+SECRET_JSON=$(aws secretsmanager get-secret-value \
+    --secret-id "${db_secret_arn}" \
+    --region "${region}" \
+    --query SecretString \
+    --output text)
+
+# Build the connection string in Python so the password is percent-encoded.
+# RDS-managed passwords contain characters that break a URL if pasted raw, and
+# the resulting failure looks like a wrong password rather than a parse error.
+DATABASE_URL=$(SECRET_JSON="$${SECRET_JSON}" python3 - <<'PY'
+import json, os, urllib.parse
+s = json.loads(os.environ["SECRET_JSON"])
+user = urllib.parse.quote(s["username"], safe="")
+pw = urllib.parse.quote(s["password"], safe="")
+print(f"postgres://{user}:{pw}@${db_host}:${db_port}/${db_name}")
+PY
+)
+
+# 0600 and root-owned. The systemd unit reads it via EnvironmentFile so the
+# password never appears in the unit file, in `systemctl show`, or in the
+# process list.
+umask 077
+cat > "$${ENV_FILE}" <<EOF
+NODE_ENV=production
+PORT=${app_port}
+HOST=0.0.0.0
+DATABASE_URL=$${DATABASE_URL}
+DATABASE_SSL=true
+COOKIE_SECURE=false
+BEACH_SIZE=${beach_size}
+STATIC_DIR=$${APP_DIR}/web/dist
+EOF
+chmod 600 "$${ENV_FILE}"
+
+# ------------------------------------------------------------- migrations ---
+
+# Run before the service starts. The runner takes a Postgres advisory lock, so
+# several instances booting at once is safe - one applies, the rest wait and
+# then find nothing to do.
+echo "=== applying migrations ==="
+set -a
+# shellcheck disable=SC1090
+source "$${ENV_FILE}"
+set +a
+node "$${APP_DIR}/api/dist/migrate.js"
+
+# ----------------------------------------------------------------- service --
+
+cat > /etc/systemd/system/bottle.service <<EOF
+[Unit]
+Description=Message in a Bottle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=$${APP_DIR}
+EnvironmentFile=$${ENV_FILE}
+ExecStart=/usr/bin/node $${APP_DIR}/api/dist/index.js
+Restart=always
+RestartSec=3
+
+# Give in-flight requests time to finish when the Auto Scaling group replaces
+# this instance. The app handles SIGTERM; this is the matching grace period.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chown -R ec2-user:ec2-user "$${APP_DIR}"
+
+systemctl daemon-reload
+systemctl enable --now bottle.service
+
+# ------------------------------------------------------------------- logs ---
+
+cat > /opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-config.json <<EOF
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/user-data.log",
+            "log_group_name": "${log_group}",
+            "log_stream_name": "{instance_id}/user-data"
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+    -a fetch-config -m ec2 -s \
+    -c file:/opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-config.json || true
+
+# ------------------------------------------------------------------ verify --
+
+echo "=== waiting for the app to answer its health check ==="
+for i in $(seq 1 30); do
+    if curl -fs "http://127.0.0.1:${app_port}/healthz" >/dev/null; then
+        echo "healthy after $${i} attempts"
+        echo "=== bootstrap finished at $(date -Is) ==="
+        exit 0
+    fi
+    sleep 2
+done
+
+echo "!!! app did not become healthy - recent logs follow"
+journalctl -u bottle.service -n 60 --no-pager || true
+exit 1

@@ -101,8 +101,11 @@ export function sessionCookieOptions() {
     return {
         httpOnly: true,
         sameSite: "lax" as const,
-        // Behind the ALB we terminate TLS, so cookies must be secure in prod.
-        secure: config.NODE_ENV === "production",
+        // Driven by COOKIE_SECURE, not NODE_ENV. See config.ts: the load
+        // balancer speaks HTTP today, and a Secure cookie is never sent over
+        // plain HTTP, so deriving this from NODE_ENV would break every login
+        // in the deployed environment while working fine locally.
+        secure: config.COOKIE_SECURE,
         path: "/",
         maxAge: config.SESSION_TTL_HOURS * 3600,
     };

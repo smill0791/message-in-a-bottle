@@ -29,3 +29,7 @@ npm-debug.log*
 
 # vite
 web/dist/
+dist/
+
+# terraform provider cache (large, machine-specific)
+infra/.terraform/
