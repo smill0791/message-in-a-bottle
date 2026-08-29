@@ -24,6 +24,15 @@ const schema = z.object({
         .default("false")
         .transform((v) => v === "true"),
 
+    /**
+     * Path to the Amazon RDS CA bundle.
+     *
+     * RDS certificates are signed by Amazon's own CA, which Node does not
+     * trust by default. Without this, a verified TLS connection to RDS fails
+     * with "self-signed certificate in certificate chain". See ssl.ts.
+     */
+    DATABASE_CA_PATH: z.string().optional(),
+
     SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 30),
 
     // How many bottles appear on the beach at once.

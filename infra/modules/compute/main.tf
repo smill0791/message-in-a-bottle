@@ -226,7 +226,19 @@ resource "aws_lb_listener" "http" {
 # ------------------------------------------------------ auto scaling group --
 
 resource "aws_autoscaling_group" "app" {
-  name = "${var.name}-asg"
+  /**
+   * name_prefix, not name.
+   *
+   * This resource is create_before_destroy, so any change that forces
+   * replacement makes Terraform build the new group before removing the old
+   * one. With a fixed name that is impossible - the create fails with
+   * "AutoScalingGroup by this name already exists" and the stack wedges,
+   * needing a manual untaint or console deletion to recover.
+   *
+   * A prefix lets the replacement get a unique name, which is the entire point
+   * of create_before_destroy.
+   */
+  name_prefix = "${var.name}-asg-"
 
   vpc_zone_identifier = var.app_subnet_ids
   target_group_arns   = [aws_lb_target_group.app.arn]

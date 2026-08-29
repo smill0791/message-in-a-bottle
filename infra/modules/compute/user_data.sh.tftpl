@@ -48,6 +48,16 @@ npm ci --omit=dev --no-audit --no-fund
 
 # --------------------------------------------------------------- database ---
 
+# Amazon RDS certificate authority bundle.
+#
+# RDS certificates are signed by Amazon's own CA, which Node does not trust by
+# default, so a verified TLS connection fails with "self-signed certificate in
+# certificate chain". Supplying the bundle keeps verification on rather than
+# disabling it - the database password crosses this connection.
+echo "=== fetching the RDS CA bundle ==="
+curl -fsSL "https://truststore.pki.rds.amazonaws.com/${region}/${region}-bundle.pem" \
+    -o "$${APP_DIR}/rds-ca.pem"
+
 echo "=== reading database credentials ==="
 SECRET_JSON=$(aws secretsmanager get-secret-value \
     --secret-id "${db_secret_arn}" \
@@ -77,6 +87,7 @@ PORT=${app_port}
 HOST=0.0.0.0
 DATABASE_URL=$${DATABASE_URL}
 DATABASE_SSL=true
+DATABASE_CA_PATH=$${APP_DIR}/rds-ca.pem
 COOKIE_SECURE=false
 BEACH_SIZE=${beach_size}
 STATIC_DIR=$${APP_DIR}/web/dist

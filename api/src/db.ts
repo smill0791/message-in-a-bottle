@@ -1,5 +1,6 @@
 import pg from "pg";
 import { config } from "./config.js";
+import { sslConfig } from "./ssl.js";
 
 /**
  * One pool per process. Sized deliberately small.
@@ -14,7 +15,7 @@ export const pool = new pg.Pool({
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
-    ssl: config.DATABASE_SSL ? { rejectUnauthorized: true } : false,
+    ssl: sslConfig(),
 });
 
 pool.on("error", (err) => {

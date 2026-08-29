@@ -43,7 +43,9 @@ cp -R web/dist "$STAGE/web/dist"
 cp -R db/migrations "$STAGE/db/migrations"
 
 mkdir -p "$ROOT/dist"
-tar -czf "$TARBALL" -C "$STAGE" .
+# COPYFILE_DISABLE stops macOS tar embedding AppleDouble/xattr headers,
+# which GNU tar on the instance warns about for every single file.
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$TARBALL" -C "$STAGE" .
 
 size=$(du -h "$TARBALL" | cut -f1)
 echo "built $TARBALL ($size)"

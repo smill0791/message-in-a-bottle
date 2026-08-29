@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { config } from "./config.js";
+import { sslConfig } from "./ssl.js";
 
 /**
  * Migration runner.
@@ -31,7 +32,7 @@ const MIGRATIONS_DIR = process.env["MIGRATIONS_DIR"]
 async function run(): Promise<void> {
     const client = new pg.Client({
         connectionString: config.DATABASE_URL,
-        ssl: config.DATABASE_SSL ? { rejectUnauthorized: true } : false,
+        ssl: sslConfig(),
     });
 
     await client.connect();
