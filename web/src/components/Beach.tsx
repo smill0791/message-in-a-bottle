@@ -52,7 +52,7 @@ export function Beach() {
     return (
         <>
             {!loading && bottles.length === 0 && (
-                <div className="veil" style={{ background: "transparent", backdropFilter: "none" }}>
+                <div className="notice-layer">
                     <div className="panel" style={{ maxWidth: 420, textAlign: "center" }}>
                         <h2>The tide is out</h2>
                         <p className="sub" style={{ marginBottom: 0 }}>

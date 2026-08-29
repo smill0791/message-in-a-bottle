@@ -46,12 +46,22 @@ variable "master_username" {
 
 variable "backup_retention_days" {
   description = <<-EOT
-    Days of automated backups. One is enough for a stack that is destroyed
-    after every session; zero would disable point-in-time recovery entirely
-    and is not worth the saving.
+    Days of automated backups. Zero disables them entirely, which is correct
+    for a stack that is destroyed after every session.
+
+    This was 1, on the reasoning that point-in-time recovery was worth a few
+    cents. That was wrong twice over. The data does not survive `destroy`
+    anyway - skip_final_snapshot is true - so the backups protect nothing. And
+    automated snapshots *outlive the instance*: after the destroy there was a
+    20GB snapshot still sitting there, which cannot be deleted by hand
+    ("automated snapshots cannot be deleted") and only disappears when its
+    retention expires. Residue that survives a teardown is exactly what the
+    ephemeral model is meant to avoid.
+
+    Raise this for anything long-lived, where the trade is real.
   EOT
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "enable_performance_insights" {

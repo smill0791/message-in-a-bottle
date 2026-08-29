@@ -194,6 +194,33 @@ button {
     to   { opacity: 1; }
 }
 
+/**
+ * A centred notice that is NOT a modal.
+ *
+ * The empty-beach message originally reused `.veil`, which is
+ * `position: fixed; inset: 0` - a full-screen layer that swallows every
+ * click. Making it transparent hid it visually but changed nothing about
+ * hit-testing, so once you opened the last bottle an invisible sheet covered
+ * the whole page and the header buttons silently stopped responding.
+ *
+ * pointer-events: none lets clicks pass through to the beach and the header;
+ * the panel itself opts back in so its own buttons still work.
+ */
+.notice-layer {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    pointer-events: none;
+    z-index: 4;
+    animation: fade 600ms var(--ease-calm);
+}
+
+.notice-layer > * {
+    pointer-events: auto;
+}
+
 .rising {
     animation: rise 900ms var(--ease-calm) both;
 }
