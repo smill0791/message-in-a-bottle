@@ -1,0 +1,29 @@
+# Seed messages - the bottles a new arrival finds first.
+#
+# These do more work than anything else in the product. A new user's first
+# three bottles decide whether they understand what this place is for, and
+# whether what they write next belongs here. Everything else is infrastructure
+# around this file.
+#
+# Format:
+#   - one message per line
+#   - blank lines and lines starting with # are ignored
+#   - 500 characters maximum, enforced; over-long lines fail the load rather
+#     than being silently truncated
+#
+# Load them:
+#   local   npm run admin -- seed
+#   on AWS  ./scripts/remote-admin.sh seed
+#
+# Re-running replaces the previous seed set rather than adding to it, so this
+# file is the single source of truth for what is seeded.
+#
+# The lines below are placeholders. Replace them with the real set.
+
+Some days the tide goes out further than you expect. It always comes back.
+I was certain I had ruined everything. Two years on, I can barely remember why.
+You do not have to be doing well to be doing enough.
+The thing I was most afraid of turned out to be survivable, and quite boring.
+Nobody is thinking about it as much as you are. I promise.
+It is alright to miss something that was bad for you.
+I planted bulbs the winter I felt worst. In spring they came up anyway.

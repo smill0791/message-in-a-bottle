@@ -486,29 +486,44 @@ catches a stack left running overnight.
 
 ## What to do next
 
-Phase 4 is the headline, but two smaller things are better value first.
+**1. ~~One admin path for the deployed database.~~ Done 2026-09-01.**
+`api/src/admin.ts` provides `seed`, `moderator` and `status`, and runs
+identically in both places - locally via `npm run admin`, and on AWS via
+`scripts/remote-admin.sh`, which executes the same compiled file on an
+instance over Session Manager. Nothing new is exposed: the instance is already
+inside the VPC and already holds the credentials.
 
-**1. One admin path for the deployed database.** *(highest value)*
-Right now there is no way to seed messages or grant a moderator on AWS - RDS
-has no public endpoint, and both currently need a hand-written SSM
-`send-command` with an inline Node script. That is the same gap twice, and it
-blocks the seed messages that are already written. One small admin script,
-or a one-off task runner, solves both permanently.
+**2. ~~Make the seed set data, not code.~~ Done 2026-09-01.**
+Messages live in `db/seeds/messages.txt`, one per line with `#` comments. The
+file ships inside the deployment artifact alongside the migrations, which is
+what makes remote seeding possible without transferring anything separately.
+**The real seed set still needs to replace the placeholders in that file.**
 
-**2. Make the seed set data, not code.**
-`scripts/seed.sh` has its placeholder messages embedded in SQL. Point it at a
-text file instead so the real seed set can simply be dropped in, and so it can
-be reused by whatever solves item 1.
+**3. Put the real seed messages in.** *(now unblocked, and yours to do)*
+Drop them into `db/seeds/messages.txt`, run `npm run admin -- seed` locally to
+check them, then `./scripts/remote-admin.sh seed` once a stack is up.
 
-**3. The load test.** Now genuinely cheap: `stack:up`, hammer `/api/beach`,
+**4. The load test.** Now genuinely cheap: `stack:up`, hammer `/api/beach`,
 watch the ASG go 2 → 4, `stack:down`. It is the single strongest portfolio
 artifact still unclaimed, and it exercises the discovery query that the whole
 schema was designed around.
 
-**4. Look at the UI properly.** It has been seen once, briefly. The opening
+**5. Look at the UI properly.** It has been seen once, briefly. The opening
 animation timing is a guess and nobody has evaluated it.
 
 Then Phase 4.
+
+### Administering the deployed database
+
+```bash
+./scripts/remote-admin.sh status              # counts, a quick sanity check
+./scripts/remote-admin.sh seed                # load db/seeds/messages.txt
+./scripts/remote-admin.sh moderator <handle>  # grant review rights
+```
+
+Requires a running stack. It finds an instance by tag, runs the command over
+SSM as root so the CLI can read `/etc/bottle.env`, and prints stdout and stderr
+back. Every invocation is attributable in CloudTrail.
 
 ## Phase 4 - Moderation pipeline
 

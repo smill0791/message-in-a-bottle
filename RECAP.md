@@ -612,15 +612,15 @@ state bucket and the two CI IAM roles remain, all free.
 
 Open items, roughly in priority order:
 
-1. **Seed messages.** A set has now been written and is collected in a text
-   file. Two things stand between that and the beach:
-   - `scripts/seed.sh` has its placeholder messages hardcoded in SQL. It
-     should read a file instead, so the seed set is data rather than code.
-   - **There is no way to seed the AWS database at all.** RDS has no public
-     endpoint, so seeding there needs the same SSM `send-command` route as
-     `make-moderator.sh`. This is the same gap twice, and worth solving once.
-2. **`make-moderator.sh` is local-only.** See above - one admin path would
-   cover both this and seeding.
+1. **The real seed messages still need to go in.** The mechanism now exists -
+   `db/seeds/messages.txt`, loaded by `npm run admin -- seed` locally or
+   `./scripts/remote-admin.sh seed` on AWS - but the file still holds the
+   seven placeholders. A set has been written; it needs pasting in and
+   reviewing.
+2. **`remote-admin.sh` has never run against a live stack.** The CLI it invokes
+   is verified from the deployed artifact layout, but the SSM invocation itself
+   is unexercised. Worth running `./scripts/remote-admin.sh status` first thing
+   the next time a stack is up, since that is read-only and proves the path.
 3. **The UI has only been seen once, briefly.** Nobody has evaluated the
    opening animation timing (~2.5s, a guess), the bottle scatter, or the
    horizon where sea meets sand. The click bug is fixed but unverified in a
@@ -646,3 +646,12 @@ Open items, roughly in priority order:
 - **Second full apply/destroy cycle**, which had been outstanding since Phase
   2 - this one ran entirely from CI under a scoped role rather than from a
   laptop with admin credentials.
+- **No admin path to the deployed database.** Seeding and moderator promotion
+  both spoke to the local Docker container directly, so neither worked against
+  RDS. Both now run through `api/src/admin.ts`: one implementation, invoked
+  locally with `npm run admin` and on AWS through `scripts/remote-admin.sh`,
+  which runs the same compiled file on an instance over Session Manager. No
+  new network path, no public admin endpoint, no bastion.
+- **The seed set was hardcoded SQL** inside `seed.sh`, so it could not be
+  edited by the person writing the messages. It is now
+  `db/seeds/messages.txt`, shipped in the artifact next to the migrations.

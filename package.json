@@ -13,6 +13,7 @@
     "db:reset": "docker compose down -v && docker compose up -d --wait && npm run db:migrate",
     "dev": "npm run dev --workspace api",
     "test": "npm run test --workspace api",
+    "admin": "npm run admin --workspace api --",
     "lint": "eslint .",
     "typecheck": "npm run typecheck --workspace api && npm run typecheck --workspace web",
     "db:migrate": "npm run migrate --workspace api"

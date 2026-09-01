@@ -78,6 +78,12 @@ else
     # expects it can never drift apart.
     cp -R db/migrations "$STAGE/db/migrations"
 
+    # Seeds travel too, for the same reason and one more: it is what makes
+    # `remote-admin.sh seed` possible without shipping a file to the instance
+    # separately. The messages that set the tone of the app arrive with the
+    # deployment that serves them.
+    cp -R db/seeds "$STAGE/db/seeds"
+
     mkdir -p "$ROOT/dist"
     # COPYFILE_DISABLE stops macOS tar embedding AppleDouble/xattr headers,
     # which GNU tar on the instance warns about for every single file.
