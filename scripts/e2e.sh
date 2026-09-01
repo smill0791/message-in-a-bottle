@@ -17,7 +17,8 @@ API="${API:-http://127.0.0.1:3000/api}"
 pass=0
 fail=0
 
-sql() { docker exec -i bottle-db psql -U bottle -d bottle -qtA -c "$1" | tr -d ' \n'; }
+# shellcheck source=lib/db.sh
+source "$(dirname "$0")/lib/db.sh"
 
 # Start from an empty database.
 #

@@ -24,6 +24,10 @@ tfplan
 .aws-sam/
 credentials
 
+# Written by scripts/deploy.sh so the notify step can quote a real URL. A
+# build output, and stale the moment the stack is rebuilt.
+.deploy-url
+
 # editors / os
 .DS_Store
 .idea/

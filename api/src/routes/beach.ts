@@ -118,8 +118,17 @@ export async function beachRoutes(app: FastifyInstance): Promise<void> {
         // Discovery count feeds the weight, so recompute outside the
         // transaction. A slightly stale weight is harmless; a slow open is not.
         if (result.firstTime) {
-            void recomputeWeight(messageId).catch((err) => {
-                req.log.warn({ err: err.message, messageId }, "weight recompute failed");
+            // `unknown`, not the implicit `any`: a rejection is not guaranteed
+            // to be an Error, and reading .message off a thrown string logs
+            // undefined - losing the one detail this line exists to capture.
+            void recomputeWeight(messageId).catch((err: unknown) => {
+                req.log.warn(
+                    {
+                        err: err instanceof Error ? err.message : String(err),
+                        messageId,
+                    },
+                    "weight recompute failed",
+                );
             });
         }
 

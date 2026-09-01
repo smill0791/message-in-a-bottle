@@ -12,9 +12,15 @@ variable "region" {
 
 variable "aws_profile" {
   description = <<-EOT
-    Always aws-dev-project. The [default] profile points at us-east-1 and shares
-    a login session with this one; alternating between them rotates the refresh
-    token and produces spurious 'authorization grant is invalid' errors.
+    Local runs: always aws-dev-project. The [default] profile points at
+    us-east-1 and shares a login session with this one; alternating between
+    them rotates the refresh token and produces spurious 'authorization grant
+    is invalid' errors.
+
+    CI runs: set this to "" (or TF_VAR_aws_profile=""). A GitLab runner
+    authenticates by assuming a role through OIDC, which puts credentials in
+    the environment - there is no ~/.aws/config and no profile of this name, so
+    a non-empty value here fails the job before a single resource is planned.
   EOT
   type        = string
   default     = "aws-dev-project"

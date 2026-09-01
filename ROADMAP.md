@@ -4,9 +4,14 @@ Three projects: a scalable 3-tier web app, the same infrastructure in Terraform,
 and a CI/CD pipeline. Sequenced around the real constraint, which is credits, not
 difficulty.
 
-> **Status as of 2026-08-29:** Phase 0 and Phase 2 (Terraform) complete. The
-> stack has been applied, verified end to end on AWS, and destroyed. **Nothing
-> is running.** Next up is Phase 3, CI/CD.
+> **Status as of 2026-08-29:** Phase 0 and Phase 2 (Terraform) complete. Phase
+> 3 (CI/CD) is **code complete but has never run** - the pipeline, the OIDC
+> bootstrap and the deploy scripts all exist and are verified locally, but
+> `infra/bootstrap` has not been applied and GitLab has no CI variables yet.
+> See "Setup still required" under Phase 3.
+>
+> The stack has been applied, verified end to end on AWS, and destroyed.
+> **Nothing is running.**
 >
 > **Read `message-in-a-bottle/RECAP.md` before running anything.** Two items in
 > particular will waste a session otherwise: Terraform must be the **arm64**
@@ -280,20 +285,119 @@ demonstrations, not construction.
 **See `message-in-a-bottle/RECAP.md`** for the full gotcha list. Read it before
 running anything.
 
-## Phase 3 - CI/CD ← **NEXT**
+## Phase 3 - CI/CD ← **IN PROGRESS** (code complete 2026-08-29, not yet run)
 
-- [ ] **CI:** lint, test, build on every push. `scripts/e2e.sh` needs a Postgres
-      service container in the pipeline.
-- [ ] Slack notification on pass/fail, reusing the pattern from the earlier
-      project.
-- [ ] **CD:** OIDC federation to an AWS IAM role. No static access keys, ever.
-- [ ] Build the artifact, upload to S3, roll it out via ASG instance refresh
-      (already configured in the launch template).
-- [ ] Deploy gated on tests passing.
-- [ ] Slack notification on deploy start and finish, including the ALB URL.
-- [ ] Optional and genuinely impressive: a scheduled job that destroys the stack
-      nightly and recreates it on demand. Both a cost control and continuous
-      proof the Terraform still works.
+**Decision (2026-08-29):** deploy is *conditional*, not unconditional. The
+exit criterion as originally written - "a commit to main reaches AWS with no
+manual step" - cannot hold literally, because the stack is destroyed after
+every session and most merges have nothing to reach. So the deploy job checks
+whether the ASG exists: if it does, the merge deploys with no manual step; if
+it does not, it says so and passes. Raising and destroying the stack are
+manual buttons, because spending money should be a decision rather than a side
+effect of merging.
+
+- [x] **CI:** lint, test, build on every push. `scripts/e2e.sh` runs against a
+      Postgres service container. **Verified** by reproducing both jobs in
+      Linux containers: 60/60 e2e, 21 unit tests, lint and typecheck clean.
+- [x] Slack notification, degradable - posts when `SLACK_WEBHOOK_URL` is set,
+      skips cleanly when it is not, so a missing webhook never reddens a good
+      build.
+- [x] **CD:** ~~OIDC federation~~ **blocked by an Organization SCP** - see
+      revised decision #2. Fallback applied and verified: an assume-role-only
+      IAM user, one short-lived session per job, nothing cached or shared.
+- [x] Build the artifact once, upload to S3, roll it out via ASG instance
+      refresh.
+- [x] Deploy gated on tests passing (`needs: [build, e2e]`).
+- [x] Slack notification on deploy start and finish, including the ALB URL.
+- [x] **Apply `infra/bootstrap`.** Done - 9 resources. Both roles verified with
+      a permission matrix: `bottle-ci-deploy` can reach exactly its four
+      permission areas and nothing else, `bottle-ci-terraform` reaches every
+      service the stack needs, and the `bottle-ci` user can do nothing at all
+      except assume those two roles.
+- [ ] **Add the CI/CD variables in GitLab** (see below).
+- [ ] **Run the pipeline once for real.** Everything above is verified locally
+      and in containers; nothing has yet run on a GitLab runner.
+- [ ] Optional: a scheduled job that destroys the stack nightly and recreates
+      it on demand. Both a cost control and continuous proof the Terraform
+      still works.
+
+### What was built
+
+| Path | Purpose |
+|---|---|
+| `.gitlab-ci.yml` | Four jobs: `build`, `e2e`, `deploy`, `stack:up` / `stack:down` |
+| `infra/bootstrap/` | OIDC provider + CI roles. **Separate state, outlives `destroy`** |
+| `scripts/deploy.sh` | Instance refresh, polled to completion |
+| `scripts/slack-notify.sh` | Degradable webhook notifier |
+| `scripts/lib/db.sh` | Shared psql access; service container in CI, docker locally |
+| `eslint.config.js` | Flat config, type-aware for the API |
+
+### Two roles, not one
+
+`bottle-ci-deploy` is genuinely least privilege: publish an artifact, roll the
+ASG, read the load balancer. It cannot create or delete infrastructure, so a
+compromised pipeline on the automatic path can ship a bad build - which a
+rollback fixes - but cannot open a security group or read the database secret.
+
+`bottle-ci-terraform` is broad, because a role that applies and destroys this
+stack genuinely needs to be. It is reachable only from manual jobs on `main`.
+Its IAM permissions are scoped by name prefix to `bottle-*`, so it cannot mint
+itself an administrator.
+
+### Setup still required *(Sampson)*
+
+The bootstrap is applied. What remains is pasting four values into GitLab.
+
+```bash
+export AWS_PROFILE=aws-dev-project
+export PATH="/opt/homebrew/bin:$PATH"
+cd message-in-a-bottle/infra/bootstrap
+
+terraform output ci_variables                    # the three non-secret values
+terraform output -raw ci_secret_access_key       # the secret, on its own
+```
+
+GitLab → Settings → CI/CD → Variables:
+
+This repository mirrors publicly, so no value below is written out. Read each
+one from the Terraform outputs instead.
+
+| Variable | Where the value comes from | Flags |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID` | `terraform output -raw ci_access_key_id` | Protected + Masked |
+| `AWS_SECRET_ACCESS_KEY` | `terraform output -raw ci_secret_access_key` | Protected + **Masked** |
+| `AWS_DEPLOY_ROLE_ARN` | `terraform output -raw deploy_role_arn` | Protected |
+| `AWS_TERRAFORM_ROLE_ARN` | `terraform output -raw terraform_role_arn` | Protected |
+| `SLACK_WEBHOOK_URL` | your incoming webhook | Protected + **Masked** |
+
+`terraform output ci_variables` prints the three non-secret values together.
+Pipe the secret straight to the clipboard rather than to the terminal, so it
+never lands in scrollback:
+
+```bash
+terraform output -raw ci_secret_access_key | pbcopy
+```
+
+An access key ID is not itself a secret - it is useless without the secret
+key - but it names a valid principal and secret scanners flag it, so it does
+not belong in a public repository either.
+
+**Protected is doing real work here**, not box-ticking. It is the only thing
+restricting the one long-lived credential to pipelines on protected branches,
+because the branch pinning that OIDC's `sub` condition would have enforced in
+AWS is unavailable. Confirm `main` is a protected branch, or the variables will
+be invisible and every AWS job will fail the credential check.
+
+The Slack webhook already exists in `~/.zshrc` locally, but GitLab has never
+had it - the messages on the earlier Salesforce project came from the
+GitLab-for-Slack *app integration*, which posts generic pass/fail and cannot
+carry a deploy URL. Different mechanism.
+
+If GitLab refuses to mask the webhook, base64-encode it - the same trap
+recorded as gotcha #7 in that project.
+
+**Key rotation:** `terraform taint aws_iam_access_key.ci[0] && terraform apply`,
+then update the two GitLab variables.
 
 **Known traps for this phase, from `RECAP.md`:**
 
@@ -365,6 +469,36 @@ the Terraform serves as the reference for what each console page should say.
    uploads to S3, nothing on local disk. Otherwise the Auto Scaling group is
    decorative.
 2. **Git: GitLab as the working remote**, with push mirroring to a public GitHub
-   repo for visibility. OIDC to AWS from GitLab CI - no static access keys.
+   repo for visibility. ~~OIDC to AWS from GitLab CI - no static access keys.~~
+
+   **Revised 2026-08-29 - forced by the account, not chosen.** OIDC was
+   designed, written and applied. AWS refused it:
+
+   ```
+   AccessDenied: not authorized to perform iam:CreateOpenIDConnectProvider
+   on arn:aws:iam::116307287000:oidc-provider/gitlab.com with an explicit
+   deny in a service control policy
+   (arn:aws:organizations::714989832131:.../p-iyptwjyf)
+   ```
+
+   That SCP belongs to the AWS-managed organization every Free Plan account
+   sits inside. It is not editable from this account, and it denies IAM
+   read/list operations generally while permitting `CreateRole`, `CreateUser`
+   and `CreateAccessKey`.
+
+   **Fallback: an assume-role-only IAM user.** GitLab holds one access key
+   whose entire policy is `sts:AssumeRole` on two roles and nothing else. Each
+   job trades it for a one-hour session as the role it needs. The permissions
+   still arrive as short-lived credentials, and CloudTrail attributes every use
+   to a named pipeline and job.
+
+   What is genuinely weaker: OIDC pinned the exact branch of the exact project
+   *in the AWS trust policy*. That now rests on marking the GitLab variables
+   Protected - a GitLab setting rather than an AWS one.
+
+   The OIDC code is kept in `infra/bootstrap/` behind `enable_oidc` (default
+   `false`). If the account is ever moved off the Free Plan, flipping it
+   restores the intended design and destroys the user and key in the same
+   apply.
 3. **Auth: simple session auth in Postgres** to start. Cognito is the migration
    target if the app ever gets real users. Anonymous handles suit the premise.

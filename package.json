@@ -13,7 +13,14 @@
     "db:reset": "docker compose down -v && docker compose up -d --wait && npm run db:migrate",
     "dev": "npm run dev --workspace api",
     "test": "npm run test --workspace api",
-    "typecheck": "npm run typecheck --workspace api",
+    "lint": "eslint .",
+    "typecheck": "npm run typecheck --workspace api && npm run typecheck --workspace web",
     "db:migrate": "npm run migrate --workspace api"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0",
+    "typescript-eslint": "^8.68.0"
   }
 }

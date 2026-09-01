@@ -10,7 +10,10 @@ set -euo pipefail
 
 SEED_AUTHOR='99999999-9999-9999-9999-999999999999'
 
-docker exec -i bottle-db psql -U bottle -d bottle -v ON_ERROR_STOP=1 -q <<SQL
+# shellcheck source=lib/db.sh
+source "$(dirname "$0")/lib/db.sh"
+
+run_sql <<SQL
 delete from messages where author_id = '$SEED_AUTHOR';
 
 insert into users (id, handle, password_hash)
@@ -34,6 +37,5 @@ select id from messages
 where not exists (select 1 from message_stats s where s.message_id = messages.id);
 SQL
 
-count=$(docker exec bottle-db psql -U bottle -d bottle -qtA \
-    -c "select count(*) from messages where status='approved'" | tr -d ' \n')
+count=$(sql "select count(*) from messages where status='approved'")
 echo "approved bottles on the beach: $count"

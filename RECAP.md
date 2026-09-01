@@ -363,6 +363,159 @@ git history. Now gitignored.
 
 ---
 
+## Phase 3 gotchas (CI/CD, 2026-08-29)
+
+### 14. A new artifact in S3 does not trigger a deployment
+
+The intuitive model - upload the build, the Auto Scaling group picks it up - is
+wrong. Instances fetch the artifact **once**, in user data, at first boot.
+Publishing to the same S3 key leaves the launch template byte for byte
+identical, so nothing is replaced and the fleet serves the old build forever.
+
+The pipeline goes green and the site does not change, which is the worst
+possible combination. `scripts/deploy.sh` exists to call
+`start-instance-refresh` explicitly and poll it to completion.
+
+### 15. The CI role cannot live in the main stack
+
+`terraform destroy` is the teardown and it runs after every session. A deploy
+role defined in that state is destroyed with it, and the next pipeline has no
+identity to come back with - recoverable only by a manual local apply, which
+defeats the point of having CI.
+
+`infra/bootstrap/` is a separate root with its own state key
+(`bottle/bootstrap.tfstate`) holding the OIDC provider and both CI roles. It is
+applied from a laptop, once. CI cannot apply it, because it creates the
+credential CI authenticates with.
+
+### 16. `provider "aws"` pinned a profile that does not exist in CI
+
+`profile = var.aws_profile` defaulted to `aws-dev-project`, which lives only in
+`~/.aws/config` on the laptop. On a runner this fails before a single resource
+is planned. It now collapses to `null` when empty, and CI sets
+`TF_VAR_aws_profile: ""`.
+
+Note `null` and `""` are not interchangeable: an empty string is still a
+lookup, for a profile named `""`.
+
+### 17. Fresh `apply` needs the artifact published *before* the ASG exists
+
+On an empty account a single `terraform apply` creates the artifact bucket and
+the Auto Scaling group in one run. The instances boot, find an empty bucket,
+fail their bootstrap, fail the ELB health check, and get replaced in a loop -
+while billing.
+
+`stack:up` therefore does three steps: targeted apply of the bucket, publish
+the artifact, then the full apply.
+
+### 18. `docker exec` cannot reach a CI service container
+
+`e2e.sh` and `seed.sh` shelled out to `docker exec bottle-db psql`. In GitLab,
+Postgres is a service container on another host and there is nothing to exec
+into. Conversely this laptop has no `psql` binary at all - only the one inside
+the container.
+
+`scripts/lib/db.sh` now prefers a real client over `DATABASE_URL` and falls
+back to `docker exec`, so both environments work from one definition.
+
+### 19. Node's type stripping does not resolve `.js` to `.ts`
+
+The project follows the NodeNext convention of importing `./screen.js` from
+TypeScript source. `node --test --experimental-strip-types` does not rewrite
+that specifier and fails with `ERR_MODULE_NOT_FOUND` on a file that plainly
+exists.
+
+The test runner is now `node --import tsx --test`. `tsx` was already a
+dependency and handles the convention.
+
+### 20. `npm test` passed with zero tests
+
+The glob `src/**/*.test.ts` matched nothing and the runner exited 0. CI would
+have reported "tests passed" forever without a single assertion existing - a
+green badge that means nothing is worse than no badge.
+
+There are now 21 real unit tests over `screen()` and `computeWeight()`, chosen
+because they are pure and because they encode design claims (the sub-linear
+resonance curve) that a later tuning change could quietly break.
+
+### 21. ESLint `allowDefaultProject` rejects `**` globs
+
+Test files are excluded from `api/tsconfig.json` so they never reach `dist`,
+which also puts them outside the TypeScript program that type-aware lint rules
+need. The obvious fix - `allowDefaultProject: ["api/src/**/*.test.ts"]` - is
+rejected outright: the option forbids `**`.
+
+`api/tsconfig.eslint.json` exists solely to give ESLint a program that includes
+the tests. It never emits anything.
+
+### 22. A service control policy blocks OIDC entirely
+
+The single biggest constraint found in this phase, and it is invisible until
+you try to apply:
+
+```
+AccessDenied: iam:CreateOpenIDConnectProvider ... explicit deny in a
+service control policy (arn:aws:organizations::714989832131:.../p-iyptwjyf)
+```
+
+Free Plan accounts sit inside an **AWS-managed organization**, and its SCP
+cannot be read or edited from the account - `iam:ListOpenIDConnectProviders`,
+`iam:GetAccountSummary` and `iam:ListRoles` are all denied too, so you cannot
+even enumerate what exists.
+
+What *is* permitted, established by probing: `CreateRole`, `CreateUser`,
+`CreateAccessKey`. So role-based access works; federation does not.
+
+The fallback is an IAM user whose only permission is `sts:AssumeRole` on the
+two CI roles. Worth stating plainly why that shape was chosen over the obvious
+one: with the policies attached directly to users, the long-lived key in GitLab
+*is* the permission, and a leaked terraform key would be immediate
+PowerUserAccess usable from anywhere. Here the key grants one capability -
+ask STS for a session - so the blast radius is bounded by the role policy,
+there is one credential to rotate rather than two, and CloudTrail records every
+use as an AssumeRole naming the pipeline and job.
+
+What is genuinely lost: OIDC pins the branch and project *in the AWS trust
+policy*. That protection now rests on GitLab's Protected variable flag. If
+`main` is not a protected branch, the variables are invisible and every AWS job
+fails - which is also the failure mode if somebody unprotects it later.
+
+`infra/bootstrap/` keeps the OIDC code behind `enable_oidc`, default false.
+
+### 23. IAM tag values reject semicolons and commas
+
+A `Purpose` tag reading `"Assumes roles only; holds no permissions"` failed the
+apply outright:
+
+```
+ValidationError: Value at 'tags.2.member.value' failed to satisfy constraint:
+Member must satisfy regular expression pattern: [\p{L}\p{Z}\p{N}_.:/=+\-@]*
+```
+
+Letters, spaces, digits and `_ . : / = + - @` only. No semicolon, and **no
+comma** either, which is the one that catches ordinary English prose.
+
+### 24. zsh word-splitting, again - this time it faked a passing security test
+
+Gotcha #9 recurred while verifying the new roles, and did real damage to the
+conclusion rather than just failing loudly.
+
+A permission matrix looped over command strings and ran `aws $p`. In zsh the
+unquoted variable is **not** word-split, so every probe was passed as one
+argument and failed. The "should be allowed" half reported DENIED, which looked
+like a broken policy - but far worse, the "must NOT be allowed" half reported
+`denied (correct)` for everything, which looked like a **passing security
+test** and proved nothing at all.
+
+Two lessons, the second more important than the first:
+
+- Loop over commands with `bash -c`, an array, or `eval` - never `aws $p` in zsh.
+- The probes discarded stderr (`2>&1` into a test). A negative test that cannot
+  distinguish "denied by policy" from "command was malformed" is not a test.
+  This is gotcha #8 wearing a different hat.
+
+---
+
 ## Application bugs found along the way
 
 Not Terraform, but they shaped the design.

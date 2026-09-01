@@ -1,0 +1,13 @@
+{
+    // Lint-only project.
+    //
+    // tsconfig.json deliberately excludes *.test.ts so that test files never
+    // land in dist and ship to production. That also puts them outside the
+    // TypeScript program, which means type-aware lint rules cannot see them.
+    //
+    // This config exists solely to give ESLint a program that includes the
+    // tests. It is never used to emit anything.
+    "extends": "./tsconfig.json",
+    "include": ["src/**/*.ts"],
+    "exclude": ["dist"]
+}

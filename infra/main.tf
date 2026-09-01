@@ -8,8 +8,18 @@
  */
 
 provider "aws" {
-  region  = var.region
-  profile = var.aws_profile
+  region = var.region
+
+  /**
+   * null, not "", when no profile is wanted.
+   *
+   * A GitLab runner gets its credentials from OIDC role assumption, which
+   * lands them in the environment. There is no ~/.aws/config on the runner, so
+   * naming a profile makes the provider fail before it plans anything. An
+   * empty string is not the same as absent here - it is still a lookup, for a
+   * profile called "" - so it has to collapse to null.
+   */
+  profile = var.aws_profile != "" ? var.aws_profile : null
 
   default_tags {
     tags = local.tags
