@@ -74,3 +74,13 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "log_retention_days" {
+  description = <<-EOT
+    Retention for the Postgres log group. Short by default: logs from a stack
+    that lives for hours have no long-term value, and RDS would otherwise
+    create this group with no expiry at all.
+  EOT
+  type        = number
+  default     = 7
+}

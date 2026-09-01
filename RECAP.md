@@ -495,7 +495,46 @@ Member must satisfy regular expression pattern: [\p{L}\p{Z}\p{N}_.:/=+\-@]*
 Letters, spaces, digits and `_ . : / = + - @` only. No semicolon, and **no
 comma** either, which is the one that catches ordinary English prose.
 
-### 24. zsh word-splitting, again - this time it faked a passing security test
+### 24. RDS creates a log group Terraform does not own, and destroy leaves it
+
+Verified on the 2026-09-01 full cycle. After a clean `Destroy complete!` and a
+sweep showing zero billable resources, one thing remained:
+
+```
+/aws/rds/instance/bottle-db/postgresql   retention: None   4571 bytes
+```
+
+`enabled_cloudwatch_logs_exports = ["postgresql"]` on the RDS instance makes
+**AWS** create that log group, not Terraform. It is therefore outside the
+state, survives `terraform destroy`, and - because AWS creates it with no
+retention policy - **never expires**.
+
+The application's own `/bottle/app` group was destroyed correctly, because
+Terraform owns it. The difference is instructive: a resource created as a side
+effect of another resource is not managed by the thing that caused it.
+
+Cost is negligible at this size, but it accumulates on every cycle and is the
+same class of orphan as the automated snapshot in gotcha #10.
+
+**Fix:** declare the log group in Terraform, with retention, so it is owned and
+destroyed like anything else. It must be created *before* the RDS instance, or
+AWS creates it first and the apply fails with an already-exists error:
+
+```hcl
+resource "aws_cloudwatch_log_group" "rds" {
+  name              = "/aws/rds/instance/${var.name}-db/postgresql"
+  retention_in_days = var.log_retention_days
+}
+```
+
+Note the existing orphan has to be deleted by hand once, or imported, before
+that will apply cleanly.
+
+**General lesson:** "terraform destroy succeeded" and "the account is empty"
+are different claims. Sweep directly, every time. Both this and gotcha #10 were
+found only because the sweep exists.
+
+### 25. zsh word-splitting, again - this time it faked a passing security test
 
 Gotcha #9 recurred while verifying the new roles, and did real damage to the
 conclusion rather than just failing loudly.
@@ -565,25 +604,45 @@ alone - fixing it revealed a second error the user could not have anticipated.
 
 ## Known issues / next session
 
-**Nothing is currently running.** The stack is destroyed; only the S3 state
-bucket and artifact bucket remain (both near-zero cost).
+*Updated 2026-09-01, after the first full CI-driven cycle.*
+
+**Nothing is currently running.** The stack was applied from CI, deployed to,
+and destroyed. A direct sweep confirmed zero billable resources. Only the S3
+state bucket and the two CI IAM roles remain, all free.
 
 Open items, roughly in priority order:
 
-1. **Seed messages** - ~30 hand-written ones. *(Sampson)* These set the tone
-   for every new arrival, which is the thing you were least sure about
-   conveying.
-2. **The UI has only been seen once, briefly.** Nobody has evaluated the
+1. **Seed messages.** A set has now been written and is collected in a text
+   file. Two things stand between that and the beach:
+   - `scripts/seed.sh` has its placeholder messages hardcoded in SQL. It
+     should read a file instead, so the seed set is data rather than code.
+   - **There is no way to seed the AWS database at all.** RDS has no public
+     endpoint, so seeding there needs the same SSM `send-command` route as
+     `make-moderator.sh`. This is the same gap twice, and worth solving once.
+2. **`make-moderator.sh` is local-only.** See above - one admin path would
+   cover both this and seeding.
+3. **The UI has only been seen once, briefly.** Nobody has evaluated the
    opening animation timing (~2.5s, a guess), the bottle scatter, or the
    horizon where sea meets sand. The click bug is fixed but unverified in a
-   browser.
-3. **`make-moderator.sh` is local-only.** On AWS, promotion currently requires
-   an SSM `send-command` with an inline Node script. Worth a proper admin path.
-4. **No TLS.** Needs a domain name → ACM certificate → HTTPS listener → flip
-   `COOKIE_SECURE=true` and `enable_https=true`.
-5. **Load test not yet run.** Hammer `/api/beach`, watch the ASG go 2 → 4,
+   browser. The stack was up for ~45 minutes on 2026-09-01 and this was still
+   not done.
+4. **Load test not yet run.** Hammer `/api/beach`, watch the ASG go 2 → 4,
    document where the discovery query degrades. This is the strongest
-   portfolio artifact available and it is cheap.
+   portfolio artifact available and it is cheap - and now that CI can raise
+   and destroy the stack on a button, the setup cost is gone.
+5. **No TLS.** Needs a domain name → ACM certificate → HTTPS listener → flip
+   `COOKIE_SECURE=true` and `enable_https=true`.
 6. **Console screenshots** - deferred deliberately. Now that the architecture
    is understood, recreating it in the console is faster and the screenshots
    are more informed.
+
+### Resolved on 2026-09-01
+
+- **Automated RDS snapshots (gotcha #10).** `backup_retention_days = 0` fixed
+  it; verified through a complete cycle with no snapshot left behind.
+- **Orphaned Postgres log group (gotcha #24).** Found by the sweep, deleted,
+  and the log group is now declared in `modules/data` with retention so
+  Terraform owns and destroys it.
+- **Second full apply/destroy cycle**, which had been outstanding since Phase
+  2 - this one ran entirely from CI under a scoped role rather than from a
+  laptop with admin credentials.

@@ -10,8 +10,35 @@ resource "aws_db_subnet_group" "this" {
   tags = merge(var.tags, { Name = "${var.name}-db-subnets" })
 }
 
+/**
+ * The Postgres log group, owned by Terraform rather than left to AWS.
+ *
+ * Setting enabled_cloudwatch_logs_exports below makes RDS create
+ * /aws/rds/instance/<identifier>/postgresql on its own. That group is outside
+ * Terraform state, so `terraform destroy` leaves it behind - and RDS creates it
+ * with no retention policy, so it keeps its contents forever. The first full
+ * cycle through CI left exactly that orphan behind (see RECAP gotcha #24).
+ *
+ * Declaring it here means it is created, retained and destroyed like anything
+ * else. The name is not a choice: RDS looks for this exact path, so it must
+ * match the instance identifier.
+ *
+ * Ordering matters. Whichever of the two exists first wins, and if RDS gets
+ * there first the next apply fails with an already-exists error - hence the
+ * explicit dependency below rather than relying on declaration order.
+ */
+resource "aws_cloudwatch_log_group" "postgresql" {
+  name              = "/aws/rds/instance/${var.name}-db/postgresql"
+  retention_in_days = var.log_retention_days
+
+  tags = merge(var.tags, { Name = "${var.name}-db-logs" })
+}
+
 resource "aws_db_instance" "this" {
   identifier = "${var.name}-db"
+
+  # So the log group exists before RDS looks for one to write into.
+  depends_on = [aws_cloudwatch_log_group.postgresql]
 
   engine         = "postgres"
   engine_version = var.engine_version

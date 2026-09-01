@@ -107,12 +107,13 @@ module "security" {
 module "data" {
   source = "./modules/data"
 
-  name              = local.name
-  subnet_ids        = module.network.data_subnet_ids
-  security_group_id = module.security.db_sg_id
-  instance_class    = var.db_instance_class
-  allocated_storage = var.db_allocated_storage
-  tags              = local.tags
+  name               = local.name
+  subnet_ids         = module.network.data_subnet_ids
+  security_group_id  = module.security.db_sg_id
+  instance_class     = var.db_instance_class
+  allocated_storage  = var.db_allocated_storage
+  log_retention_days = var.log_retention_days
+  tags               = local.tags
 }
 
 module "compute" {

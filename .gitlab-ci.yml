@@ -309,10 +309,17 @@ deploy:
 
 stack:up:
   extends: .terraform_job
-  # A failed apply must be loud. Manual jobs default to allow_failure: true,
-  # which would paint a half-built stack as a passing pipeline - and a
-  # half-built stack is still billing.
-  allow_failure: false
+  # allow_failure: true, so the pipeline is not held hostage by a button.
+  #
+  # With false, GitLab treats a manual job as *blocking*: the pipeline never
+  # reaches "passed", it sits waiting for a click that will not come on the
+  # vast majority of commits. Every merge would show as blocked forever.
+  #
+  # The loudness this gives up is smaller than it looks. A failed job still
+  # goes red on its own, and the after_script below announces it in Slack -
+  # which is what actually reaches you, since nobody is watching a pipeline
+  # badge at the moment an apply falls over.
+  allow_failure: true
   needs:
     - job: build
       artifacts: true
@@ -339,6 +346,15 @@ stack:up:
     - cd ..
     - . ./deploy.env
     - ./scripts/slack-notify.sh --status ok "Stack is up" "$STACK_URL"
+  after_script:
+    # A failed apply is the dangerous one: it can leave a NAT gateway, an RDS
+    # instance and a load balancer running while reporting nothing. The job
+    # goes red, but red jobs are only seen by someone already looking.
+    - |
+      if [ "$CI_JOB_STATUS" != "success" ]; then
+        ./scripts/slack-notify.sh --status fail \
+          "STACK:UP FAILED - resources may be half-built and billing. Run stack:down." || true
+      fi
   artifacts:
     reports:
       dotenv: deploy.env
@@ -351,10 +367,12 @@ stack:up:
 
 stack:down:
   extends: .terraform_job
-  # A failed destroy is the most expensive failure in this project - it leaves
-  # a NAT gateway running at ~$33/month against a $120 credit balance. It must
-  # never be reported as success.
-  allow_failure: false
+  # See stack:up. A failed destroy is the most expensive failure in this
+  # project - a forgotten NAT gateway is ~$33/month against a $120 credit
+  # balance - but the alarm that matters is the Slack message in after_script,
+  # not the pipeline's overall status. Blocking every pipeline forever to keep
+  # a badge honest is the wrong trade.
+  allow_failure: true
   # Depends on nothing, deliberately.
   #
   # Teardown has to be reachable at all times. With the default stage

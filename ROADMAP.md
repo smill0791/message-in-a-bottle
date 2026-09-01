@@ -4,14 +4,17 @@ Three projects: a scalable 3-tier web app, the same infrastructure in Terraform,
 and a CI/CD pipeline. Sequenced around the real constraint, which is credits, not
 difficulty.
 
-> **Status as of 2026-08-29:** Phase 0 and Phase 2 (Terraform) complete. Phase
-> 3 (CI/CD) is **code complete but has never run** - the pipeline, the OIDC
-> bootstrap and the deploy scripts all exist and are verified locally, but
-> `infra/bootstrap` has not been applied and GitLab has no CI variables yet.
-> See "Setup still required" under Phase 3.
+> **Status as of 2026-09-01:** Phases 0, 2 and 3 complete. A commit to `main`
+> now runs lint, typecheck, unit tests and 60 end-to-end checks, then deploys
+> to AWS with no manual step when a stack is up. Raising and destroying the
+> stack are one-click jobs.
 >
-> The stack has been applied, verified end to end on AWS, and destroyed.
-> **Nothing is running.**
+> The full cycle has been run from CI: 48 resources applied, a rolling deploy
+> that replaced both instances five minutes apart without dropping traffic,
+> then a destroy verified by a direct sweep. **Nothing is running.**
+>
+> Next up is Phase 4, the moderation pipeline - but see "What to do next"
+> at the bottom, because two smaller items are better value first.
 >
 > **Read `message-in-a-bottle/RECAP.md` before running anything.** Two items in
 > particular will waste a session otherwise: Terraform must be the **arm64**
@@ -315,8 +318,24 @@ effect of merging.
       service the stack needs, and the `bottle-ci` user can do nothing at all
       except assume those two roles.
 - [ ] **Add the CI/CD variables in GitLab** (see below).
-- [ ] **Run the pipeline once for real.** Everything above is verified locally
-      and in containers; nothing has yet run on a GitLab runner.
+- [x] **Run the pipeline once for real.** Done 2026-09-01, pipeline
+      `#2811095528` on commit `9de6285`. `build`, `e2e` and `deploy` all
+      passed on GitLab runners. `deploy` assumed the CI role, found no Auto
+      Scaling group, and skipped cleanly - which is the designed behaviour
+      when no stack is up, and proves the whole credential chain end to end.
+- [x] Run `stack:up`, a real deploy, and `stack:down`. **Done 2026-09-01.**
+      48 resources applied from CI in 8m31s, both targets healthy, one per AZ.
+      The `deploy` job then published the artifact and ran an instance refresh:
+      both instances replaced **five minutes apart**, proving the rolling
+      replacement kept the service up rather than restarting the fleet at once.
+      Slack posted on stack up, deploy start and deploy finish. `stack:down`
+      destroyed everything and a direct sweep confirmed zero billable
+      resources - including no RDS snapshot, which verifies the gotcha #10 fix
+      through a full cycle for the first time.
+- [ ] Clean up the orphaned RDS log group and bring it under Terraform. See
+      RECAP gotcha #24 - AWS creates
+      `/aws/rds/instance/bottle-db/postgresql` itself, with no retention, and
+      `destroy` leaves it behind.
 - [ ] Optional: a scheduled job that destroys the stack nightly and recreates
       it on demand. Both a cost control and continuous proof the Terraform
       still works.
@@ -412,6 +431,84 @@ then update the two GitLab variables.
 
 **Exit criteria:** a commit to main reaches AWS with no manual step, and Slack
 says so.
+
+## The working loop, now that CI/CD exists
+
+Day to day, nothing touches AWS. The stack is down by default and that is the
+normal state, not a chore to be corrected.
+
+### Ordinary development - free, no AWS
+
+```bash
+npm run db:up                     # local Postgres in Docker
+npm run dev                       # API on :3000
+npm run dev --workspace web       # Vite on :5173
+
+npm run lint && npm run typecheck && npm test    # what CI will run
+./scripts/e2e.sh                  # 60 checks (NOTE: truncates the database)
+./scripts/seed.sh                 # restore placeholder bottles afterwards
+```
+
+Push a branch and open a merge request and the pipeline runs `build` and
+`e2e` only - no AWS credentials are exposed to merge request pipelines, and
+nothing costs anything.
+
+### Getting a change onto AWS
+
+What happens on a merge to `main` depends on whether a stack is up:
+
+| State | On merge to `main` |
+|---|---|
+| **No stack running** (usual) | `deploy` finds no ASG, says so, passes. Nothing costs anything. |
+| **Stack running** | `deploy` publishes the artifact and rolls the fleet automatically. No manual step. |
+
+So the two paths are:
+
+**To review something on AWS from a cold start** - merge to `main`, wait for
+`build` and `e2e` to pass, then click **`stack:up`**. That job publishes the
+artifact *as part of coming up*, so the running stack is already on your new
+commit. There is no need to run `deploy` afterwards.
+
+**To ship a change to a stack that is already up** - just merge. `deploy` runs
+by itself, uploads the artifact and performs a rolling instance refresh with
+the site staying available throughout.
+
+Then click **`stack:down`** when finished. That is the cost control, and it is
+the step that must not be skipped.
+
+### Cost
+
+~$0.10/hour with the stack up. A 45-minute session is about **six cents**. The
+budget `bottle-monthly-10-usd` alerts on forecast, which is the alert that
+catches a stack left running overnight.
+
+---
+
+## What to do next
+
+Phase 4 is the headline, but two smaller things are better value first.
+
+**1. One admin path for the deployed database.** *(highest value)*
+Right now there is no way to seed messages or grant a moderator on AWS - RDS
+has no public endpoint, and both currently need a hand-written SSM
+`send-command` with an inline Node script. That is the same gap twice, and it
+blocks the seed messages that are already written. One small admin script,
+or a one-off task runner, solves both permanently.
+
+**2. Make the seed set data, not code.**
+`scripts/seed.sh` has its placeholder messages embedded in SQL. Point it at a
+text file instead so the real seed set can simply be dropped in, and so it can
+be reused by whatever solves item 1.
+
+**3. The load test.** Now genuinely cheap: `stack:up`, hammer `/api/beach`,
+watch the ASG go 2 → 4, `stack:down`. It is the single strongest portfolio
+artifact still unclaimed, and it exercises the discovery query that the whole
+schema was designed around.
+
+**4. Look at the UI properly.** It has been seen once, briefly. The opening
+animation timing is a guess and nobody has evaluated it.
+
+Then Phase 4.
 
 ## Phase 4 - Moderation pipeline
 
